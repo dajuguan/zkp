@@ -1,5 +1,6 @@
 from field import FieldElement as F
 
+## ===========================Part 1=====================================##
 # -------------------FibonacciSq Trace-------------------
 a = [F(1), F(3141592)]
 while len(a) < 1023:
@@ -40,11 +41,22 @@ from polynomial import interpolate_poly
 
 
 # -------------------Evaluate on coset-------------------
+import pickle
+import os
 w = F.generator()
 h = w ** ((2 ** 30 * 3) // 8192)
 H = [h ** i for i in range(8192)]
 eval_domain = [w * x for x in H]
-f = interpolate_poly(G[:-1], a)
+f_file = "cache/f.obj"
+if os.path.exists(f_file):
+    file = open(f_file,'rb')
+    f = pickle.load(file)
+    file.close()
+else:
+    f = interpolate_poly(G[:-1], a)
+    file = open(f_file,'wb')
+    pickle.dump(f, file)
+    file.close()
 f_eval = [f(d) for d in eval_domain]
 
 # Test against a precomputed hash.
@@ -63,3 +75,55 @@ print('Merkle Root Check Success!')
 from channel import Channel
 channel = Channel()
 channel.send(f_merkle.root)
+
+for v in [a, g, G, h, H, eval_domain, f, f_eval, f_merkle, channel]:
+    assert v!=None
+
+## ===========================Part 2=====================================##
+from polynomial import interpolate_poly, X, prod
+# The First Constraint:
+numer0 = f - 1
+denom0 = X-1
+p0 = numer0 / denom0
+assert p0(2718) == 2509888982
+print('First Constrain Check Success!')
+
+# The Second Constraint:
+numer1 = f - 2338775057
+denom1 = X - g**1022
+p1 = numer1 / denom1
+assert p1(5772) == 232961446
+print('Second Constrain Check Success!')
+
+# Other Constraints:
+numer2 = f(g**2*X) - (f(g*X))**2 - f**2
+denom2 = (X**1024 - 1)/(X-g**1021)/(X-g**1022)/(X-g**1023)
+print("Numerator at g^1020 is", numer2(g**1020))
+print("Numerator at g^1021 is", numer2(g**1021))
+p2 = numer2 / denom2
+assert p2.degree() == 1023, f'The degree of the third constraint is {p2.degree()} when it should be 1023.'
+assert p2(31415) == 2090051528
+print('Other Constraints Check Success!')
+
+# Composition Polynomial
+def get_CP(channel):
+    alpha0 = channel.receive_random_field_element()
+    alpha1 = channel.receive_random_field_element()
+    alpha2 = channel.receive_random_field_element()
+    return alpha0*p0 + alpha1*p1 + alpha2*p2
+
+test_channel = Channel()
+CP_test = get_CP(test_channel)
+assert CP_test.degree() == 1023, f'The degree of cp is {CP_test.degree()} when it should be 1023.'
+assert CP_test(2439804) == 838767343, f'cp(2439804) = {CP_test(2439804)}, when it should be 838767343'
+print('Composition Polynomial Check Success!')
+
+def CP_eval(channel):
+    CP = get_CP(channel)
+    return [CP(d) for d in eval_domain]
+
+channel = Channel()
+CP_merkle = MerkleTree(CP_eval(channel))
+channel.send(CP_merkle.root)
+assert CP_merkle.root == 'a8c87ef9764af3fa005a1a2cf3ec8db50e754ccb655be7597ead15ed4a9110f1', 'Merkle tree root is wrong.'
+print('CP_merkle Check Success!')
