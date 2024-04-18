@@ -2,7 +2,7 @@ from field import FieldElement as F
 import time
 
 ## ===========================Part 1=====================================##
-print("Generating the trace...")
+print("===Generating the trace...")
 start = time.time()
 start_all = start
 # -------------------FibonacciSq Trace-------------------
@@ -83,9 +83,9 @@ channel.send(f_merkle.root)
 for v in [a, g, G, h, H, eval_domain, f, f_eval, f_merkle, channel]:
     assert v!=None
 
-print(f'{time.time() - start}s')
+print(f'==={time.time() - start}s')
 ## ===========================Part 2=====================================##
-print("Generating the composition polynomial and the FRI layers...")
+print("===Generating the composition polynomial and the FRI layers...")
 start = time.time()
 
 from polynomial import interpolate_poly, X, prod
@@ -138,9 +138,9 @@ print('CP_merkle Check Success!')
 for v in [cp, cp_eval, cp_merkle, channel, eval_domain]:
     assert v != None
 
-print(f'{time.time() - start}s')
+print(f'==={time.time() - start}s')
 ## ===========================Part 3=====================================##
-print("Generating queries...")
+print("===Generating queries...")
 start = time.time()
 
 from polynomial import interpolate_poly, Polynomial
@@ -210,9 +210,9 @@ def FriCommit(cp, domain, cp_eval, cp_merkle, channel):
 
 fri_polys, fri_domains, fri_layers, fri_merkles = FriCommit(cp, eval_domain, cp_eval, cp_merkle, channel)
 
-print(f'{time.time() - start}s')
+print(f'==={time.time() - start}s')
 ## ===========================Part 4: Query Phase=====================================##
-print("Generating Decommitments...")
+print("===Generating Decommitments...")
 start = time.time()
 
 def decommit_on_fri_layers(idx, channel):
@@ -251,5 +251,5 @@ def decommit_fri(channel):
         # Get a random index from the verifier and send the corresponding decommitment.
         decommit_on_query(channel.receive_random_int(0, 8191-16), channel)
 
-print(f'{time.time() - start}s')
-print(f'Overall Provding time: {time.time() - start}s')
+print(f'==={time.time() - start}s')
+print(f'===Overall Provding time: {time.time() - start}s')
