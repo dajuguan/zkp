@@ -42,6 +42,7 @@ class Channel(object):
     def __init__(self):
         self.state = '0'
         self.proof = []
+        self.channel_idx = 0
 
     def send(self, s):
         self.state = sha256((self.state + s).encode()).hexdigest()
@@ -69,3 +70,20 @@ class Channel(object):
         num = self.receive_random_int(0, FieldElement.k_modulus - 1, show_in_proof=False)
         self.proof.append(f'{inspect.stack()[0][3]}:{num}')
         return FieldElement(num)
+    
+    def get_s(self, s="send:"):
+        channel_idx = self.channel_idx
+        assert channel_idx < len(self.proof)
+        assert self.proof[channel_idx].startswith(s)
+        v = self.proof[channel_idx][len(s):]
+        self.channel_idx += 1
+        return v
+
+    def get_f(self):
+        v = self.get_s('receive_random_field_element:')
+        return FieldElement(int(v))
+    
+    def get_i(self):
+        v = self.get_s('receive_random_int:')
+        return int(v)
+
