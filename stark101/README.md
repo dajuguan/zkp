@@ -1,8 +1,8 @@
 # Understanding Stark and FRI
-## Requirements
+## How to run: 
 ```
-python^3.11.5
-Optional: tqdm
+Require: python^3.11.5, Optional: pip install tqdm
+python main.py
 ```
 
 ## Ref:
