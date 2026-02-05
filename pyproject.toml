@@ -4,7 +4,7 @@ version = "0.1.0"
 description = ""
 authors = [{ name = "Po", email = "wwwcjf163@163.com" }]
 requires-python = ">=3.14"
-dependencies = ["numpy (>=2.4.2,<3.0.0)"]
+dependencies = ["numpy (>=2.4.2,<3.0.0)", "galois (>=0.4.10,<0.5.0)"]
 
 [tool.poetry]
 package-mode = false
