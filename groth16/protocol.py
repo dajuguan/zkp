@@ -16,6 +16,8 @@ by introducing two random scalas that prover don't know: α and β
 let A = α + A, B = β + B, C = αA + βB + w(x) + h(x)t(x), 
 then prover had to prove the following equation:
 [A]_1 · [B]_2 = [α]_1 · [β]_2 +  [C]_1 · G_2
+
+为什么必须两个随机数？保证A和B在setup中被commit，如果只对A加随机数，那么setup和B没关系，导致可以修改B来构造witness。
 """
 
 # Introducing γ and/or δ from misusing public inputs
