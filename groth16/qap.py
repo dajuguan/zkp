@@ -18,7 +18,7 @@ def poly(xs, v):
 
 
 ###########################
-# simple QAP for tesing two vectors are equal
+# simple QAP (Quadratic Arithmetic Programs) for tesing two vectors are equal
 ###########################
 A = GF(np.matrix([[6, 3], [4, 7]]))
 B = GF(np.matrix([[3, 9], [12, 6]]))
