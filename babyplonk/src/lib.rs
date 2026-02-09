@@ -1,2 +1,3 @@
-mod pairing;
-mod tiny_field;
+pub mod kzg;
+pub mod pairing;
+pub mod tiny_field;

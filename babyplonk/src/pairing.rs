@@ -1,6 +1,6 @@
 use ark_ff::Field;
 
-use crate::tiny_field::{Fp2, G1Point, G2Point, PRIME, TinyFp};
+use crate::tiny_field::{BASE_FIELD_MODULUS, BaseField, Fp2, G1Point, G2Point};
 
 // order of G1 and G2 group
 const R: u64 = 17;
@@ -55,18 +55,18 @@ fn line_eval(r: &G1Point, s: &G1Point, q: &G2Point) -> (Fp2, G1Point) {
     let xq_minus_x1 = xq.sub(&x1_fp2);
     let yq_minus_y1 = yq.sub(&y1_fp2);
 
-    if x1 == x2 && y1 + y2 == TinyFp::ZERO {
+    if x1 == x2 && y1 + y2 == BaseField::ZERO {
         let g = xq.sub(&Fp2::from(x1));
         return (g, G1Point::Infinity);
     }
 
     let (lambda, x3, y3) = if x1 == x2 && y1 == y2 {
-        if y1 == TinyFp::ZERO {
+        if y1 == BaseField::ZERO {
             let g = xq.sub(&Fp2::from(x1));
             return (g, G1Point::Infinity);
         }
-        let three = TinyFp::from(3u64);
-        let two = TinyFp::from(2u64);
+        let three = BaseField::from(3u64);
+        let two = BaseField::from(2u64);
         let num = three * x1 * x1;
         let den = (two * y1).inverse().unwrap();
         let lam = num * den;
@@ -119,7 +119,7 @@ pub fn pairing(p: &G1Point, q: &G2Point) -> GT {
         (G1Point::Infinity, _) | (_, G2Point::Infinity) => GT::one(),
         _ => {
             let f = miller_loop(p, q);
-            let p = PRIME as u128;
+            let p = BASE_FIELD_MODULUS as u128;
             let exp = ((p * p - 1) / (R as u128)) as u64;
             GT::new(f).pow(exp)
         }
@@ -138,8 +138,8 @@ mod tests {
         let a = 2u64;
         let b = 3u64;
 
-        let p = g1.scalar_mul(a);
-        let q = g2.scala_mul(TinyFp::from(b));
+        let p = g1.scalar_mul_u64(a);
+        let q = g2.scalar_mul_u64(b);
 
         let left = pairing(&p, &q);
         let right = pairing(&g1, &g2).pow(a * b);
@@ -155,8 +155,8 @@ mod tests {
         for a in 0u64..5 {
             for b in 0u64..5 {
                 // e(aP, bQ) = e(P, Q)^(ab)
-                let p = g1.scalar_mul(a);
-                let q = g2.scala_mul(TinyFp::from(b));
+                let p = g1.scalar_mul_u64(a);
+                let q = g2.scalar_mul_u64(b);
                 let left = pairing(&p, &q);
                 let right = pairing(&g1, &g2).pow(a * b);
                 assert_eq!(left, right, "a={a}, b={b}");
@@ -171,10 +171,10 @@ mod tests {
         let g1 = G1Point::generator();
         let g2 = G2Point::generator();
 
-        let p1 = g1.scalar_mul(2);
-        let p2 = g1.scalar_mul(5);
-        let q1 = g2.scala_mul(TinyFp::from(3u64));
-        let q2 = g2.scala_mul(TinyFp::from(4u64));
+        let p1 = g1.scalar_mul_u64(2);
+        let p2 = g1.scalar_mul_u64(5);
+        let q1 = g2.scalar_mul_u64(3);
+        let q2 = g2.scalar_mul_u64(4);
 
         let left_p = pairing(&p1.add(&p2), &q1);
         let right_p = pairing(&p1, &q1).mul(&pairing(&p2, &q1));
