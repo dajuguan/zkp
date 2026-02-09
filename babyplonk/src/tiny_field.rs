@@ -4,7 +4,7 @@
 
 use ark_ff::{BigInt, Field, Fp, Fp64, MontBackend, MontConfig, One, PrimeField, Zero};
 
-const PRIME: u64 = 101;
+pub const PRIME: u64 = 101;
 pub struct FpConfig;
 
 impl MontConfig<1> for FpConfig {
@@ -17,61 +17,63 @@ impl MontConfig<1> for FpConfig {
 pub type TinyFp = Fp64<MontBackend<FpConfig, 1>>;
 
 // ==============================================
-// Extension field Fp^2 = Fp[i] / (i^2 + 1)
+// Extension field Fp^2 = Fp[i] / (i^2 - NON_RESIDUE)
 // ==============================================
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Fp2 {
+pub struct Fp2 {
     c0: TinyFp, // real part
     c1: TinyFp, // imaginary part
 }
 
 impl Fp2 {
-    fn new(c0: TinyFp, c1: TinyFp) -> Self {
+    const NON_RESIDUE: u64 = 2;
+    pub fn new(c0: TinyFp, c1: TinyFp) -> Self {
         Fp2 { c0, c1 }
     }
 
-    fn zero() -> Self {
+    pub fn zero() -> Self {
         Fp2::new(TinyFp::ZERO, TinyFp::ZERO)
     }
 
-    fn one() -> Self {
-        Fp2::new(TinyFp::ONE, TinyFp::ONE)
+    pub fn one() -> Self {
+        Fp2::new(TinyFp::ONE, TinyFp::ZERO)
     }
 
-    fn add(&self, other: &Fp2) -> Fp2 {
+    pub fn add(&self, other: &Fp2) -> Fp2 {
         Fp2::new(self.c0 + other.c0, self.c1 + other.c1)
     }
 
-    fn sub(&self, other: &Fp2) -> Fp2 {
+    pub fn sub(&self, other: &Fp2) -> Fp2 {
         Fp2::new(self.c0 - other.c0, self.c1 - other.c1)
     }
 
-    //  (a + bi)(c+di) = (ac-bd) + (ad+bc)i (i^2 = -1)
-    fn mul(&self, other: &Fp2) -> Fp2 {
+    //  (a + bi)(c+di) = (ac + bd * nr) + (ad + bc)i (i^2 = nr)
+    pub fn mul(&self, other: &Fp2) -> Fp2 {
         let ac = self.c0 * other.c0;
         let bd = self.c1 * other.c1;
-        // in fp: (a + b)(c+d) = ac + bd + (ad + bc)
-        let ad_plus_bc = (self.c0 + self.c1) * (other.c0 + other.c1) - ac - bd;
-        Fp2::new(ac - bd, ad_plus_bc)
+        let nr = TinyFp::from(Self::NON_RESIDUE);
+        let ad_plus_bc = self.c0 * other.c1 + self.c1 * other.c0;
+        Fp2::new(ac + bd * nr, ad_plus_bc)
     }
 
-    fn scala_mul(&self, scala: TinyFp) -> Fp2 {
+    pub fn scala_mul(&self, scala: TinyFp) -> Fp2 {
         Fp2::new(self.c0 * scala, self.c1 * scala)
     }
 
-    fn square(&self) -> Fp2 {
+    pub fn square(&self) -> Fp2 {
         self.mul(self)
     }
 
     // conj( a+ bi) = a - bi
-    fn conjugate(&self) -> Fp2 {
+    pub fn conjugate(&self) -> Fp2 {
         Fp2::new(self.c0, -self.c1)
     }
 
-    fn inverse(&self) -> Option<Fp2> {
-        // (a + bi)^-1 = (a - bi) / (a^2 + b^2)
-        let norm = self.c0 * self.c0 + self.c1 * self.c1;
+    pub fn inverse(&self) -> Option<Fp2> {
+        // (a + bi)^-1 = (a - bi) / (a^2 - nr * b^2)
+        let nr = TinyFp::from(Self::NON_RESIDUE);
+        let norm = self.c0 * self.c0 - nr * self.c1 * self.c1;
         if norm == TinyFp::ZERO {
             return None;
         }
@@ -79,8 +81,14 @@ impl Fp2 {
         Some(self.conjugate().scala_mul(norm_inv))
     }
 
-    fn neg(&self) -> Fp2 {
+    pub fn neg(&self) -> Fp2 {
         Fp2::new(-self.c0, -self.c1)
+    }
+}
+
+impl From<TinyFp> for Fp2 {
+    fn from(value: TinyFp) -> Self {
+        Fp2::new(value, TinyFp::from(0u64))
     }
 }
 
@@ -89,13 +97,13 @@ impl Fp2 {
 // ==============================================
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum G1Point {
+pub enum G1Point {
     Infinity,
     Affine { x: TinyFp, y: TinyFp },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum G2Point {
+pub enum G2Point {
     Infinity,
     Affine { x: Fp2, y: Fp2 },
 }
@@ -103,7 +111,7 @@ enum G2Point {
 impl G1Point {
     // Elliptic curve: E: y^2 = x^3 + 3 over TinyFp
     const B: u64 = 3;
-    fn is_on_curve(&self) -> bool {
+    pub(crate) fn is_on_curve(&self) -> bool {
         match self {
             G1Point::Affine { x, y } => {
                 let lhs = y * y;
@@ -113,7 +121,7 @@ impl G1Point {
             G1Point::Infinity => true,
         }
     }
-    fn generator() -> Self {
+    pub(crate) fn generator() -> Self {
         let point = G1Point::Affine {
             x: TinyFp::from(1u64),
             y: TinyFp::from(2u64),
@@ -122,7 +130,7 @@ impl G1Point {
         point
     }
 
-    fn add(&self, other: &G1Point) -> G1Point {
+    pub(crate) fn add(&self, other: &G1Point) -> G1Point {
         match (self, other) {
             (G1Point::Infinity, _) => other.clone(),
             (_, G1Point::Infinity) => self.clone(),
@@ -145,7 +153,7 @@ impl G1Point {
     }
 
     /// point double
-    fn double(&self) -> G1Point {
+    pub(crate) fn double(&self) -> G1Point {
         match self {
             G1Point::Infinity => G1Point::Infinity,
             G1Point::Affine { x, y } => {
@@ -163,22 +171,35 @@ impl G1Point {
     }
 
     // Point negative -(x, y) = (x, -y)
-    fn negate(&self) -> G1Point {
+    pub(crate) fn negate(&self) -> G1Point {
         match self {
             G1Point::Infinity => G1Point::Infinity,
             G1Point::Affine { x, y } => G1Point::Affine { x: *x, y: -*y },
         }
     }
 
-    fn sub(&self, other: &G1Point) -> G1Point {
+    pub(crate) fn sub(&self, other: &G1Point) -> G1Point {
         self.add(&other.negate())
+    }
+
+    pub(crate) fn scalar_mul(&self, mut k: u64) -> G1Point {
+        let mut acc = G1Point::Infinity;
+        let mut cur = *self;
+        while k > 0 {
+            if k & 1 == 1 {
+                acc = acc.add(&cur);
+            }
+            cur = cur.double();
+            k >>= 1;
+        }
+        acc
     }
 }
 
 impl G2Point {
     // Elliptic curve: E: y^2 = x^3 + 3 over Fp2
     const B: u64 = 3;
-    fn is_on_curve(&self) -> bool {
+    pub(crate) fn is_on_curve(&self) -> bool {
         match self {
             G2Point::Infinity => true,
             G2Point::Affine { x, y } => {
@@ -189,18 +210,18 @@ impl G2Point {
             }
         }
     }
-    fn generator() -> Self {
-        // (0 + 3i, 9 + 49i)
-        // Verified: (9 + 49i)^2 = (3i)^3 + 3 = 3 + 74i (mod 101)
+    pub(crate) fn generator() -> Self {
+        // Distortion map of G1 generator: (x, y) -> (xi * x, y),
+        // where xi^2 + xi + 1 = 0 in Fp2.
         let point = G2Point::Affine {
-            x: Fp2::new(TinyFp::from(0u64), TinyFp::from(3u64)),
-            y: Fp2::new(TinyFp::from(9u64), TinyFp::from(49u64)),
+            x: Fp2::new(TinyFp::from(50u64), TinyFp::from(47u64)),
+            y: Fp2::new(TinyFp::from(2u64), TinyFp::from(0u64)),
         };
         debug_assert!(point.is_on_curve());
         point
     }
 
-    fn add(&self, other: &G2Point) -> G2Point {
+    pub(crate) fn add(&self, other: &G2Point) -> G2Point {
         match (self, other) {
             (G2Point::Infinity, _) => other.clone(),
             (_, G2Point::Infinity) => self.clone(),
@@ -225,7 +246,7 @@ impl G2Point {
     }
 
     /// point double
-    fn double(&self) -> G2Point {
+    pub(crate) fn double(&self) -> G2Point {
         match self {
             G2Point::Infinity => G2Point::Infinity,
             G2Point::Affine { x, y } => {
@@ -244,7 +265,7 @@ impl G2Point {
         }
     }
 
-    fn scala_mul(&self, scala: TinyFp) -> G2Point {
+    pub(crate) fn scala_mul(&self, scala: TinyFp) -> G2Point {
         let mut result = G2Point::Infinity;
         let mut temp = self.clone();
         let scala_bits = scala.into_bigint().0[0];
@@ -259,14 +280,14 @@ impl G2Point {
     }
 
     // Point negative -(x, y) = (x, -y)
-    fn negate(&self) -> G2Point {
+    pub(crate) fn negate(&self) -> G2Point {
         match self {
             G2Point::Infinity => G2Point::Infinity,
             G2Point::Affine { x, y } => G2Point::Affine { x: *x, y: y.neg() },
         }
     }
 
-    fn sub(&self, other: &G2Point) -> G2Point {
+    pub(crate) fn sub(&self, other: &G2Point) -> G2Point {
         self.add(&other.negate())
     }
 }
@@ -361,8 +382,8 @@ mod tests {
         assert_eq!(
             g2,
             G2Point::Affine {
-                x: fp2(38, 33),
-                y: fp2(61, 75)
+                x: fp2(67, 65),
+                y: fp2(74, 0)
             }
         );
 
@@ -370,8 +391,8 @@ mod tests {
         assert_eq!(
             g3,
             G2Point::Affine {
-                x: fp2(19, 91),
-                y: fp2(88, 44)
+                x: fp2(88, 10),
+                y: fp2(45, 0)
             }
         );
 
