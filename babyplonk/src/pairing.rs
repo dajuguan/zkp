@@ -131,7 +131,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_pairing_bilinear_property() {
+    fn test_pairing_bilinear_property_success() {
         // e(aP, bQ) = e(P, Q)^(ab)
         let g1 = G1Point::generator();
         let g2 = G2Point::generator();
@@ -148,7 +148,7 @@ mod tests {
     }
 
     #[test]
-    fn test_pairing_multiple_cases() {
+    fn test_pairing_multiple_cases_success() {
         let g1 = G1Point::generator();
         let g2 = G2Point::generator();
 
@@ -165,7 +165,7 @@ mod tests {
     }
 
     #[test]
-    fn test_pairing_bilinear_in_each_argument() {
+    fn test_pairing_bilinear_in_each_argument_success() {
         // e(P1+P2, Q) = e(P1, Q) * e(P2, Q)
         // e(P, Q1+Q2) = e(P, Q1) * e(P, Q2)
         let g1 = G1Point::generator();
@@ -186,7 +186,7 @@ mod tests {
     }
 
     #[test]
-    fn test_pairing_with_infinity() {
+    fn test_pairing_with_infinity_success() {
         // e(O, Q) = 1 and e(P, O) = 1
         let g1 = G1Point::generator();
         let g2 = G2Point::generator();

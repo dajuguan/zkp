@@ -2,7 +2,7 @@
 // define a tiny Fp, p = 101
 // ==============================================
 
-use ark_ff::{BigInt, Field, Fp, Fp64, MontBackend, MontConfig, One, PrimeField, Zero};
+use ark_ff::{BigInt, Field, Fp64, MontBackend, MontConfig, PrimeField};
 
 pub const BASE_FIELD_MODULUS: u64 = 101;
 pub const SCALAR_FIELD_MODULUS: u64 = 17;
@@ -325,7 +325,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fp_works() {
+    fn test_fp_works_success() {
         let a = BaseField::from(100u64);
         let b = BaseField::from(2u64);
         assert_eq!(a + b, BaseField::from(102 % BASE_FIELD_MODULUS));
@@ -351,7 +351,7 @@ mod tests {
     }
 
     #[test]
-    fn test_g1_add_double_expected() {
+    fn test_g1_add_double_expected_success() {
         let g = G1Point::generator();
         let g2 = g.add(&g);
         assert_eq!(
@@ -375,7 +375,7 @@ mod tests {
     }
 
     #[test]
-    fn test_g1_negate_sub_identity() {
+    fn test_g1_negate_sub_identity_success() {
         let g = G1Point::generator();
         assert_eq!(g.add(&G1Point::Infinity), g);
         assert_eq!(G1Point::Infinity.add(&g), g);
@@ -384,7 +384,7 @@ mod tests {
     }
 
     #[test]
-    fn test_g1_double_y_zero_is_infinity() {
+    fn test_g1_double_y_zero_is_infinity_success() {
         let p = G1Point::Affine {
             x: fp(48),
             y: fp(0),
@@ -393,13 +393,13 @@ mod tests {
     }
 
     #[test]
-    fn test_g2_generator_on_curve() {
+    fn test_g2_generator_on_curve_success() {
         let g = G2Point::generator();
         assert!(g.is_on_curve());
     }
 
     #[test]
-    fn test_g2_add_double_expected() {
+    fn test_g2_add_double_expected_success() {
         let g = G2Point::generator();
         let g2 = g.add(&g);
         assert_eq!(
@@ -423,7 +423,7 @@ mod tests {
     }
 
     #[test]
-    fn test_g2_negate_sub_identity() {
+    fn test_g2_negate_sub_identity_success() {
         let g = G2Point::generator();
         assert_eq!(g.add(&G2Point::Infinity), g);
         assert_eq!(G2Point::Infinity.add(&g), g);
@@ -432,7 +432,7 @@ mod tests {
     }
 
     #[test]
-    fn test_g2_scalar_mul_matches_add() {
+    fn test_g2_scalar_mul_matches_add_success() {
         let g = G2Point::generator();
         let g2 = g.add(&g);
         let g3 = g2.add(&g);
