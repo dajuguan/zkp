@@ -1,9 +1,8 @@
 use ark_ff::Field;
 
-use crate::tiny_field::{BASE_FIELD_MODULUS, BaseField, Fp2, G1Point, G2Point};
-
-// order of G1 and G2 group
-const R: u64 = 17;
+use crate::tiny_field::{
+    BASE_FIELD_MODULUS, BaseField, Fp2, G1Point, G2Point, SCALAR_FIELD_MODULUS,
+};
 
 // Toy target group in the smallest extension field that contains Fp2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,7 +91,7 @@ fn miller_loop(p: &G1Point, q: &G2Point) -> Fp2 {
     let mut r = *p;
 
     let mut bits = Vec::new();
-    let mut n = R;
+    let mut n = SCALAR_FIELD_MODULUS;
     while n > 0 {
         bits.push((n & 1) as u8);
         n >>= 1;
@@ -120,7 +119,7 @@ pub fn pairing(p: &G1Point, q: &G2Point) -> GT {
         _ => {
             let f = miller_loop(p, q);
             let p = BASE_FIELD_MODULUS as u128;
-            let exp = ((p * p - 1) / (R as u128)) as u64;
+            let exp = ((p * p - 1) / (SCALAR_FIELD_MODULUS as u128)) as u64;
             GT::new(f).pow(exp)
         }
     }

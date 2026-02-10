@@ -1,11 +1,11 @@
 // ==============================================
-// define a tiny Fp, p = 101
+// define a tiny Fp, p = 4294957973
 // ==============================================
 
 use ark_ff::{BigInt, Field, Fp64, MontBackend, MontConfig, PrimeField};
 
-pub const BASE_FIELD_MODULUS: u64 = 101;
-pub const SCALAR_FIELD_MODULUS: u64 = 17;
+pub const BASE_FIELD_MODULUS: u64 = 4294957973;
+pub const SCALAR_FIELD_MODULUS: u64 = 715826329;
 pub struct FpConfig;
 pub struct FrConfig;
 
@@ -138,7 +138,9 @@ impl G1Point {
             y: BaseField::from(2u64),
         };
         debug_assert!(point.is_on_curve());
-        point
+        // Ensure the generator is in the r-torsion subgroup by multiplying the cofactor (6),
+        // since #E(Fp) = 6 * r for this curve/field choice.
+        point.scalar_mul_u64(6)
     }
 
     pub fn add(&self, other: &G1Point) -> G1Point {
@@ -227,14 +229,14 @@ impl G2Point {
         }
     }
     pub fn generator() -> Self {
-        // Distortion map of G1 generator: (x, y) -> (xi * x, y),
-        // where xi^2 + xi + 1 = 0 in Fp2.
         let point = G2Point::Affine {
-            x: Fp2::new(BaseField::from(50u64), BaseField::from(47u64)),
+            x: Fp2::new(BaseField::from(2147478986u64), BaseField::from(530893494u64)),
             y: Fp2::new(BaseField::from(2u64), BaseField::from(0u64)),
         };
         debug_assert!(point.is_on_curve());
-        point
+        // Ensure the generator is in the r-torsion subgroup by multiplying the cofactor (6),
+        // since #E(Fp) = 6 * r for this curve/field choice.
+        point.scalar_mul_u64(6)
     }
 
     pub fn add(&self, other: &G2Point) -> G2Point {
@@ -320,10 +322,6 @@ mod tests {
         BaseField::from(v)
     }
 
-    fn fp2(a: u64, b: u64) -> Fp2 {
-        Fp2::new(fp(a), fp(b))
-    }
-
     #[test]
     fn test_fp_works_success() {
         let a = BaseField::from(100u64);
@@ -354,24 +352,10 @@ mod tests {
     fn test_g1_add_double_expected_success() {
         let g = G1Point::generator();
         let g2 = g.add(&g);
-        assert_eq!(
-            g2,
-            G1Point::Affine {
-                x: fp(68),
-                y: fp(74)
-            }
-        );
-
-        let g3 = g2.add(&g);
-        assert_eq!(
-            g3,
-            G1Point::Affine {
-                x: fp(26),
-                y: fp(45)
-            }
-        );
-
         assert_eq!(g.double(), g2);
+        let g3 = g2.add(&g);
+        assert_eq!(g3, g.add(&g2));
+        assert!(g3.is_on_curve());
     }
 
     #[test]
@@ -402,24 +386,10 @@ mod tests {
     fn test_g2_add_double_expected_success() {
         let g = G2Point::generator();
         let g2 = g.add(&g);
-        assert_eq!(
-            g2,
-            G2Point::Affine {
-                x: fp2(67, 65),
-                y: fp2(74, 0)
-            }
-        );
-
-        let g3 = g2.add(&g);
-        assert_eq!(
-            g3,
-            G2Point::Affine {
-                x: fp2(88, 10),
-                y: fp2(45, 0)
-            }
-        );
-
         assert_eq!(g.double(), g2);
+        let g3 = g2.add(&g);
+        assert_eq!(g3, g.add(&g2));
+        assert!(g3.is_on_curve());
     }
 
     #[test]
