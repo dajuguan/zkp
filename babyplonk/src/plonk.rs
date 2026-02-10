@@ -23,11 +23,8 @@ pub struct Plonk<Fr, PCS: PolyCommit> {
 }
 
 pub struct PlonkKZG10Proof {
-    t_commit: G1Point,
     gate_proof: GateCheckProof,
     wire_proof: PrescribedPermutationProof,
-    t_eval_r: ScalarField,
-    t_proof_r: G1Point,
     t_eval_wr: ScalarField,
     t_proof_wr: G1Point,
     t_eval_w2r: ScalarField,
@@ -90,11 +87,9 @@ impl Plonk<ScalarField, KZG10> {
         // encode & commit witness
         // T(x): interpolate witness values over Ω.
         let t_poly = interpolate(&t_domain, &self.witness);
-        // Commit to T(x); open at r, ωr, ω^2 r for the gate constraint.
-        let t_commit = pcs.commit(&t_poly);
+        // Open T(x) at ωr, ω^2 r for the gate constraint (T(r) comes from wire_proof).
         let omega_r = r * omega;
         let omega2_r = r * omega * omega;
-        let (t_eval_r, t_proof_r) = pcs.open(&t_poly, r);
         let (t_eval_wr, t_proof_wr) = pcs.open(&t_poly, omega_r);
         let (t_eval_w2r, t_proof_w2r) = pcs.open(&t_poly, omega2_r);
 
@@ -145,11 +140,8 @@ impl Plonk<ScalarField, KZG10> {
         );
 
         PlonkKZG10Proof {
-            t_commit,
             gate_proof,
             wire_proof,
-            t_eval_r,
-            t_proof_r,
             t_eval_wr,
             t_proof_wr,
             t_eval_w2r,
@@ -187,27 +179,23 @@ impl Plonk<ScalarField, KZG10> {
         }
         let omega_r = r * omega;
         let omega2_r = r * omega * omega;
-        let t_eval_r;
+        // T(r) is provided by wire_proof (f = T in permutation check).
+        let t_eval_r = proof.wire_proof.f_eval_r;
         let t_eval_wr;
         let t_eval_w2r;
-        if !self
-            .pcs
-            .verify(&proof.t_commit, r, proof.t_eval_r, &proof.t_proof_r)
-        {
-            return false;
-        } else {
-            t_eval_r = proof.t_eval_r;
-        }
-        if !self
-            .pcs
-            .verify(&proof.t_commit, omega_r, proof.t_eval_wr, &proof.t_proof_wr)
-        {
+        // T(ωr) and T(ω^2 r) are verified against the same commitment from wire_proof.
+        if !self.pcs.verify(
+            &proof.wire_proof.f_commit,
+            omega_r,
+            proof.t_eval_wr,
+            &proof.t_proof_wr,
+        ) {
             return false;
         } else {
             t_eval_wr = proof.t_eval_wr;
         }
         if !self.pcs.verify(
-            &proof.t_commit,
+            &proof.wire_proof.f_commit,
             omega2_r,
             proof.t_eval_w2r,
             &proof.t_proof_w2r,
@@ -457,8 +445,10 @@ mod tests {
         let gate_eval_poly = gate_poly.evaluate(&r);
         let gate_eval_open = {
             let s_eval = s_poly.evaluate(&r);
-            s_eval * (proof.t_eval_r + proof.t_eval_wr)
-                + (ScalarField::ONE - s_eval) * proof.t_eval_r * proof.t_eval_wr
+            s_eval * (proof.wire_proof.f_eval_r + proof.t_eval_wr)
+                + (ScalarField::ONE - s_eval)
+                    * proof.wire_proof.f_eval_r
+                    * proof.t_eval_wr
                 - proof.t_eval_w2r
         };
         assert_eq!(gate_eval_poly, gate_eval_open);
