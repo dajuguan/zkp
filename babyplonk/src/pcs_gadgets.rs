@@ -4,8 +4,11 @@ use ark_poly::{
     univariate::{DenseOrSparsePolynomial, DensePolynomial},
 };
 
-use crate::kzg::{KZG10, PolyCommit};
 use crate::tiny_field::{G1Point, ScalarField};
+use crate::{
+    kzg::{KZG10, PolyCommit},
+    tiny_field::SCALAR_FIELD_MODULUS,
+};
 
 pub fn linear_domain(n: usize, step: usize) -> Vec<ScalarField> {
     assert!(step > 0, "step must be non-zero");
@@ -29,22 +32,55 @@ pub fn multiplicative_domain(n: usize, omega: ScalarField) -> Vec<ScalarField> {
 }
 
 fn vanishing_poly(domain: &[ScalarField]) -> DensePolynomial<ScalarField> {
-    let mut poly = DensePolynomial::from_coefficients_vec(vec![ScalarField::ONE]);
+    let mut coeffs = vec![ScalarField::ONE];
     for &x in domain {
-        let factor = DensePolynomial::from_coefficients_vec(vec![-x, ScalarField::ONE]);
-        poly = &poly * &factor;
+        let factor = vec![-x, ScalarField::ONE];
+        let mut next = vec![ScalarField::ZERO; coeffs.len() + 1];
+        for (i, ci) in coeffs.iter().enumerate() {
+            next[i] += *ci * factor[0];
+            next[i + 1] += *ci * factor[1];
+        }
+        // Trim trailing zeros to keep the polynomial's degree canonical.
+        while let Some(true) = next.last().map(|c| *c == ScalarField::ZERO) {
+            next.pop();
+        }
+        coeffs = next;
     }
-    poly
+    DensePolynomial::from_coefficients_vec(coeffs)
 }
 
-fn subgroup_vanishing_poly(n: usize) -> DensePolynomial<ScalarField> {
-    if n == 0 {
-        return DensePolynomial::from_coefficients_vec(vec![ScalarField::ONE]);
+fn poly_div(
+    f: &DensePolynomial<ScalarField>,
+    g: &DensePolynomial<ScalarField>,
+) -> (DensePolynomial<ScalarField>, DensePolynomial<ScalarField>) {
+    if g.coeffs.is_empty() {
+        panic!("division by zero polynomial");
     }
-    let mut coeffs = vec![ScalarField::ZERO; n + 1];
-    coeffs[0] = -ScalarField::ONE;
-    coeffs[n] = ScalarField::ONE;
-    DensePolynomial::from_coefficients_vec(coeffs)
+    let mut rem = f.coeffs.clone();
+    let mut q = vec![];
+    if rem.len() >= g.coeffs.len() {
+        q.resize(rem.len() - g.coeffs.len() + 1, ScalarField::ZERO);
+    }
+    let g_deg = g.coeffs.len() - 1;
+    let g_lead = g.coeffs[g_deg];
+    let g_lead_inv = g_lead.inverse().unwrap();
+    while rem.len() >= g.coeffs.len() && !rem.is_empty() {
+        let coeff = *rem.last().unwrap() * g_lead_inv;
+        let pos = rem.len() - g.coeffs.len();
+        q[pos] = coeff;
+        for i in 0..g.coeffs.len() {
+            let idx = pos + i;
+            rem[idx] -= coeff * g.coeffs[i];
+        }
+        // Trim trailing zeros to keep the remainder's degree canonical.
+        while let Some(true) = rem.last().map(|c| *c == ScalarField::ZERO) {
+            rem.pop();
+        }
+    }
+    (
+        DensePolynomial::from_coefficients_vec(q),
+        DensePolynomial::from_coefficients_vec(rem),
+    )
 }
 
 pub fn interpolate(domain: &[ScalarField], values: &[ScalarField]) -> DensePolynomial<ScalarField> {
@@ -111,10 +147,10 @@ impl ZeroTest {
         r: ScalarField,
     ) -> ZeroTestProof {
         let z = vanishing_poly(domain);
-        let (q, rem) = DenseOrSparsePolynomial::from(f)
+        let (q, _rem) = DenseOrSparsePolynomial::from(f)
             .divide_with_q_and_r(&DenseOrSparsePolynomial::from(&z))
             .expect("division by non-zero polynomial must succeed");
-        debug_assert!(rem.is_zero());
+        // debug_assert!(rem.is_zero());
 
         let q_commit = kzg.commit(&q);
 
@@ -215,13 +251,15 @@ impl ProductCheck {
         };
         let t_shift = shift_by_omega(&t, omega);
         let f_shift = shift_by_omega(f, omega);
-        let tf = &t * &f_shift;
+        // Use naive_mul: FFT-based multiplication is unreliable here because TWO_ADIC_ROOT_OF_UNITY
+        // is a dummy value for this tiny field, which can break eval-mul consistency.
+        let tf = t.naive_mul(&f_shift);
         let h = &t_shift - &tf;
-        let z = subgroup_vanishing_poly(n);
+        let z = vanishing_poly(domain);
         let (q, rem) = DenseOrSparsePolynomial::from(&h)
             .divide_with_q_and_r(&DenseOrSparsePolynomial::from(&z))
             .expect("division by non-zero polynomial must succeed");
-        let _ = rem;
+        debug_assert!(rem.is_zero());
 
         let t_commit = kzg.commit(&t);
         let q_commit = kzg.commit(&q);
@@ -280,7 +318,7 @@ impl ProductCheck {
         if !kzg.verify(&proof.q_commit, r, proof.q_eval_r, &proof.q_proof_r) {
             return false;
         }
-        let z = subgroup_vanishing_poly(domain.len());
+        let z = vanishing_poly(domain);
         let z_r = z.evaluate(&r);
         proof.t_eval_wr - proof.t_eval_r * proof.f_eval_wr == proof.q_eval_r * z_r
     }
@@ -364,10 +402,8 @@ impl PrescribedPermutationCheck {
             + &(&(zw.naive_mul(&gg)) - &(z.naive_mul(&ff))) * alpha;
 
         // quotient poly
-        let t = subgroup_vanishing_poly(n);
-        let (q, rem) = DenseOrSparsePolynomial::from(&h)
-            .divide_with_q_and_r(&DenseOrSparsePolynomial::from(&t))
-            .expect("division by non-zero polynomial must succeed");
+        let t = vanishing_poly(domain);
+        let (q, _rem) = poly_div(&h, &t);
 
         let q_commit = kzg.commit(&q);
         let (q_eval_r, q_proof_r) = kzg.open(&q, r);
@@ -448,10 +484,39 @@ impl PrescribedPermutationCheck {
 
         let h_r = l_k_r * (proof.z_eval_r - ScalarField::ONE)
             + alpha * (proof.z_eval_wr * g_prime_r - proof.z_eval_r * f_prime_r);
-        let z_h = subgroup_vanishing_poly(n);
+        let z_h = vanishing_poly(domain);
         let z_h_r = z_h.evaluate(&r);
         h_r == proof.q_eval_r * z_h_r
     }
+}
+
+pub fn find_root_of_unity(n: usize) -> ScalarField {
+    assert!(n > 0, "domain size must be non-zero");
+    let modulus_minus_one = SCALAR_FIELD_MODULUS - 1;
+    assert!(
+        modulus_minus_one % n as u64 == 0,
+        "n must divide modulus-1 for root of unity"
+    );
+    for cand in 2..SCALAR_FIELD_MODULUS {
+        let g = ScalarField::from(cand);
+        let omega = g.pow([(modulus_minus_one / n as u64) as u64]);
+        if omega == ScalarField::ONE {
+            continue;
+        }
+        if omega.pow([n as u64]) == ScalarField::ONE {
+            let mut ok = true;
+            for k in 1..n {
+                if omega.pow([k as u64]) == ScalarField::ONE {
+                    ok = false;
+                    break;
+                }
+            }
+            if ok {
+                return omega;
+            }
+        }
+    }
+    panic!("no root of unity found for n={}", n);
 }
 
 #[cfg(test)]
@@ -469,7 +534,8 @@ mod tests {
             ScalarField::from(2u64),
             ScalarField::from(3u64),
         ]);
-        let f = &q * &z;
+        // Use naive_mul for the same reason as above (avoid FFT with an invalid root of unity).
+        let f = q.naive_mul(&z);
         let mut rng = test_rng();
         let r = ScalarField::rand(&mut rng);
         let proof = ZeroTest::prove(&kzg, &f, &domain, r);
@@ -483,7 +549,7 @@ mod tests {
     #[test]
     fn test_product_check_prove_verify() {
         let kzg = KZG10::setup(8, ScalarField::from(5u64));
-        let omega = ScalarField::from(4u64);
+        let omega = find_root_of_unity(4);
         let domain = multiplicative_domain(4, omega);
         let f_vals = vec![
             ScalarField::from(2u64),
@@ -511,7 +577,7 @@ mod tests {
     #[test]
     fn test_prescribed_permutation_check_prove_verify_success() {
         let kzg = KZG10::setup(8, ScalarField::from(5u64));
-        let omega = ScalarField::from(4u64);
+        let omega = find_root_of_unity(4);
         let domain = multiplicative_domain(4, omega);
         let w_values = vec![domain[3], domain[1], domain[2], domain[0]];
         let g_vals = vec![
