@@ -72,6 +72,13 @@ impl Plonk<ScalarField, KZG10> {
         beta: ScalarField,
         gamma: ScalarField,
     ) -> PlonkKZG10Proof {
+        // Gate constraint over Ω_gates:
+        //   S(y) * (T(y) + T(ωy)) + (1 - S(y)) * T(y) * T(ωy) - T(ω^2 y) = 0, ∀ y ∈ Ω_gates.
+        // Permutation constraint over Ω:
+        // T(y) = T(W(y))  (checked via prescribed permutation with α, β, γ).
+        // T(x): witness polynomial over Ω;
+        // S(x): selector polynomial over Ω_gates;
+        // W(x): permutation polynomial given by perm indices over Ω.
         // commit T
         let witness = &self.witness;
         let selector = &self.selector;
@@ -81,34 +88,39 @@ impl Plonk<ScalarField, KZG10> {
         let t_domain = multiplicative_domain(witness.len(), omega);
 
         // encode & commit witness
+        // T(x): interpolate witness values over Ω.
         let t_poly = interpolate(&t_domain, &self.witness);
+        // Commit to T(x); open at r, ωr, ω^2 r for the gate constraint.
         let t_commit = pcs.commit(&t_poly);
-        let wr = r * omega;
-        let w2r = r * omega * omega;
+        let omega_r = r * omega;
+        let omega2_r = r * omega * omega;
         let (t_eval_r, t_proof_r) = pcs.open(&t_poly, r);
-        let (t_eval_wr, t_proof_wr) = pcs.open(&t_poly, wr);
-        let (t_eval_w2r, t_proof_w2r) = pcs.open(&t_poly, w2r);
+        let (t_eval_wr, t_proof_wr) = pcs.open(&t_poly, omega_r);
+        let (t_eval_w2r, t_proof_w2r) = pcs.open(&t_poly, omega2_r);
 
         // Gate domain: {1, ω^3, ω^6, ...} with size = selector.len().
         // IMPORTANT: build gate_poly by formula, not by interpolating a few gate_domain samples,
         // because the true gate polynomial degree can exceed the gate_domain size.
         let gate_domain = multiplicative_domain(selector.len(), omega * omega * omega);
+        // S(x): selector over Ω_gates; T(ωx), T(ω^2 x) are shifted polynomials.
         let s_poly = interpolate(&gate_domain, &selector);
-        let t_w = shift_by_omega(&t_poly, omega);
-        let t_w2 = shift_by_omega(&t_poly, omega * omega);
+        let t_omega = shift_by_omega(&t_poly, omega);
+        let t_omega2 = shift_by_omega(&t_poly, omega * omega);
         let one = DensePolynomial::from_coefficients_vec(vec![ScalarField::ONE]);
         let one_minus_s = &one - &s_poly;
-        let mut gate_poly = s_poly.naive_mul(&(&t_poly + &t_w));
-        gate_poly += &one_minus_s.naive_mul(&t_poly.naive_mul(&t_w));
-        gate_poly += &(-t_w2);
+        // G(x): gate polynomial constructed by formula (not by interpolating samples).
+        let mut gate_poly = s_poly.naive_mul(&(&t_poly + &t_omega));
+        gate_poly += &one_minus_s.naive_mul(&t_poly.naive_mul(&t_omega));
+        gate_poly += &(-t_omega2);
         let mut gate_coeffs = gate_poly.coeffs.clone();
         while let Some(true) = gate_coeffs.last().map(|c| *c == ScalarField::ZERO) {
             gate_coeffs.pop();
         }
         let gate_poly = DensePolynomial::from_coefficients_vec(gate_coeffs);
-        let z = vanishing_poly(&gate_domain);
+        // Z_gates(x): vanishing polynomial of Ω_gates.
+        let z_gate = vanishing_poly(&gate_domain);
         let (q, _rem) = DenseOrSparsePolynomial::from(&gate_poly)
-            .divide_with_q_and_r(&DenseOrSparsePolynomial::from(&z))
+            .divide_with_q_and_r(&DenseOrSparsePolynomial::from(&z_gate))
             .expect("division by non-zero polynomial must succeed");
         let q_commit = pcs.commit(&q);
         let (q_eval_r, q_proof_r) = pcs.open(&q, r);
@@ -119,13 +131,14 @@ impl Plonk<ScalarField, KZG10> {
             q_proof_r,
         };
 
-        // wires prescribed perm. check
+        // Wires prescribed permutation check (T vs. T(W)).
         let mut tw_evals = Vec::with_capacity(witness.len());
         for i in 0..witness.len() {
             let eval = witness[perm[i] as usize];
             tw_evals.push(eval);
         }
         let tw_poly = interpolate(&t_domain, &tw_evals);
+        // W(x): permutation polynomial as values over Ω.
         let w_values: Vec<_> = perm.iter().map(|v| t_domain[*v as usize]).collect();
         let wire_proof = PrescribedPermutationCheck::prove(
             pcs, &t_poly, &tw_poly, &t_domain, &w_values, alpha, beta, gamma, r,
@@ -152,6 +165,12 @@ impl Plonk<ScalarField, KZG10> {
         beta: ScalarField,
         gamma: ScalarField,
     ) -> bool {
+        // Verify at random r:
+        //   S(r) * (T(r) + T(ωr)) + (1 - S(r)) * T(r) * T(ωr) - T(ω^2 r) = Q_gate(r) * Z_gates(r).
+        // And verify the prescribed permutation check for T against W.
+        // T(x): witness polynomial over Ω;
+        // S(x): selector polynomial over Ω_gates;
+        // W(x): permutation polynomial defined by perm indices over Ω.
         let witness_len = self.perm.len();
         let omega = self.omega;
         let t_domain = multiplicative_domain(witness_len, omega);
@@ -166,8 +185,8 @@ impl Plonk<ScalarField, KZG10> {
         if proof.wire_proof.r != r {
             return false;
         }
-        let wr = r * omega;
-        let w2r = r * omega * omega;
+        let omega_r = r * omega;
+        let omega2_r = r * omega * omega;
         let t_eval_r;
         let t_eval_wr;
         let t_eval_w2r;
@@ -181,33 +200,36 @@ impl Plonk<ScalarField, KZG10> {
         }
         if !self
             .pcs
-            .verify(&proof.t_commit, wr, proof.t_eval_wr, &proof.t_proof_wr)
+            .verify(&proof.t_commit, omega_r, proof.t_eval_wr, &proof.t_proof_wr)
         {
             return false;
         } else {
             t_eval_wr = proof.t_eval_wr;
         }
-        if !self
-            .pcs
-            .verify(&proof.t_commit, w2r, proof.t_eval_w2r, &proof.t_proof_w2r)
-        {
+        if !self.pcs.verify(
+            &proof.t_commit,
+            omega2_r,
+            proof.t_eval_w2r,
+            &proof.t_proof_w2r,
+        ) {
             return false;
         } else {
             t_eval_w2r = proof.t_eval_w2r;
         }
         let s_poly = interpolate(&gate_domain, &self.selector);
         let s_eval = s_poly.evaluate(&r);
-        let gate_eval = s_eval * (t_eval_r + t_eval_wr)
+        let gate_eval_r = s_eval * (t_eval_r + t_eval_wr)
             + (ScalarField::ONE - s_eval) * t_eval_r * t_eval_wr
             - t_eval_w2r;
-        let mut z_r = ScalarField::ONE;
+        // Z_gates(r): vanishing polynomial of Ω_gates evaluated at r.
+        let mut z_gate_eval_r = ScalarField::ONE;
         for x in gate_domain.iter() {
-            z_r *= r - *x;
+            z_gate_eval_r *= r - *x;
         }
-        if z_r == ScalarField::ZERO {
+        if z_gate_eval_r == ScalarField::ZERO {
             return false;
         }
-        if gate_eval != proof.gate_proof.q_eval_r * z_r {
+        if gate_eval_r != proof.gate_proof.q_eval_r * z_gate_eval_r {
             return false;
         }
         if !self.pcs.verify(

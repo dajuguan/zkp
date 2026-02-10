@@ -139,16 +139,22 @@ pub struct ZeroTestProof {
 pub struct ZeroTest;
 
 impl ZeroTest {
-    // Prove that f(x) = 0 for all x in domain.
+    // ZeroTest: prove a polynomial vanishes on Ω (f(x) = 0 for all x ∈ Ω).
+    // Z_Ω(x): vanishing polynomial of Ω, Z_Ω(x) = ∏_{ω ∈ Ω} (x - ω).
+    // Zero test over domain Ω:
+    //   z(x) = ∏_{ω ∈ Ω} (x - ω)
+    //   f(x) = q(x) * z(x)
+    // Prove correctness by opening q(r) and checking f(r) = q(r) * z(r).
     pub fn prove(
         kzg: &KZG10,
         f: &DensePolynomial<ScalarField>,
         domain: &[ScalarField],
         r: ScalarField,
     ) -> ZeroTestProof {
-        let z = vanishing_poly(domain);
+        // Z_Ω(x): vanishing polynomial of Ω.
+        let z_omega = vanishing_poly(domain);
         let (q, _rem) = DenseOrSparsePolynomial::from(f)
-            .divide_with_q_and_r(&DenseOrSparsePolynomial::from(&z))
+            .divide_with_q_and_r(&DenseOrSparsePolynomial::from(&z_omega))
             .expect("division by non-zero polynomial must succeed");
         // debug_assert!(rem.is_zero());
 
@@ -170,8 +176,9 @@ impl ZeroTest {
         f_eval: ScalarField,
         proof: &ZeroTestProof,
     ) -> bool {
-        let z = vanishing_poly(domain);
-        let z_r = z.evaluate(&proof.r);
+        // Check: f(r) = q(r) * z(r), with z(x) the vanishing polynomial of Ω.
+        let z_omega = vanishing_poly(domain);
+        let z_r = z_omega.evaluate(&proof.r);
         if !kzg.verify(&proof.q_commit, proof.r, proof.q_eval, &proof.q_proof) {
             return false;
         }
@@ -184,6 +191,7 @@ impl ZeroTest {
         f: &DensePolynomial<ScalarField>,
         proof: &ZeroTestProof,
     ) -> bool {
+        // Zero test verification using f(r): f(r) = q(r) * z(r).
         let f_eval = f.evaluate(&proof.r);
         Self::verify_with_f_eval(kzg, domain, f_eval, proof)
     }
@@ -211,11 +219,14 @@ pub struct ProductCheckProof {
 pub struct ProductCheck;
 
 impl ProductCheck {
-    // Product check on multiplicative subgroup domain 1, ω, ω^2, ...:
-    // prove that ∏_{x in domain} a(x) = 1.
-    //  1. 𝑡 (𝜔 ⋅ x) − 𝑡 (𝑥 )⋅ a (𝜔 ⋅ x) = 0
-    //  2. 𝑡(𝜔^(𝑘−1)) = 1
-    //  t_eval_wr - t_eval_r * a_eval_wr == q_eval_r * z_r
+    // ProductCheck: prove ∏_{x∈Ω} f(x) = 1 via running product t(x).
+    // t(x): running product polynomial over Ω.
+    // h(x): t(ωx) − t(x) * f(ωx) = q(x) * Z_Ω(x), where Z_Ω(x) is the vanishing polynomial of Ω.
+    // Product check over multiplicative subgroup Ω = {1, ω, ω^2, ...}:
+    //   t(ωx) − t(x) * f(ωx) = 0  for all x ∈ Ω
+    //   t(ω^{n-1}) = 1
+    //   h(x) = t(ωx) − t(x) * f(ωx) = q(x) * z(x), z(x) = ∏_{u ∈ Ω} (x - u)
+    // Verify at random r: t(ωr) − t(r) * f(ωr) = q(r) * z(r), and t(ω^{n-1}) = 1.
     pub fn prove(
         kzg: &KZG10,
         f: &DensePolynomial<ScalarField>,
@@ -242,6 +253,7 @@ impl ProductCheck {
             }
         }
 
+        // t(x): running product polynomial over Ω.
         let t = interpolate(domain, &t_vals);
 
         let omega = if n > 1 {
@@ -249,15 +261,17 @@ impl ProductCheck {
         } else {
             ScalarField::ONE
         };
-        let t_shift = shift_by_omega(&t, omega);
-        let f_shift = shift_by_omega(f, omega);
+        // t(ωx), f(ωx): shifted polynomials.
+        let t_omega = shift_by_omega(&t, omega);
+        let f_omega = shift_by_omega(f, omega);
         // Use naive_mul: FFT-based multiplication is unreliable here because TWO_ADIC_ROOT_OF_UNITY
         // is a dummy value for this tiny field, which can break eval-mul consistency.
-        let tf = t.naive_mul(&f_shift);
-        let h = &t_shift - &tf;
-        let z = vanishing_poly(domain);
+        let tf = t.naive_mul(&f_omega);
+        // h(x) = t(ωx) - t(x) * f(ωx); Z_Ω(x) is the vanishing polynomial of Ω.
+        let h = &t_omega - &tf;
+        let z_omega = vanishing_poly(domain);
         let (q, rem) = DenseOrSparsePolynomial::from(&h)
-            .divide_with_q_and_r(&DenseOrSparsePolynomial::from(&z))
+            .divide_with_q_and_r(&DenseOrSparsePolynomial::from(&z_omega))
             .expect("division by non-zero polynomial must succeed");
         debug_assert!(rem.is_zero());
 
@@ -266,10 +280,10 @@ impl ProductCheck {
         let last_point = domain[n - 1];
         let (last_eval, last_proof) = kzg.open(&t, last_point);
 
-        let wr = r * omega;
+        let omega_r = r * omega;
         let (t_eval_r, t_proof_r) = kzg.open(&t, r);
-        let (t_eval_wr, t_proof_wr) = kzg.open(&t, wr);
-        let (f_eval_wr, f_proof_wr) = kzg.open(f, wr);
+        let (t_eval_wr, t_proof_wr) = kzg.open(&t, omega_r);
+        let (f_eval_wr, f_proof_wr) = kzg.open(f, omega_r);
         let (q_eval_r, q_proof_r) = kzg.open(&q, r);
 
         ProductCheckProof {
@@ -292,6 +306,9 @@ impl ProductCheck {
         }
     }
 
+    // Verify: t(ωr) − t(r) * f(ωr) = q(r) * z(r), and t(ω^{n-1}) = 1.
+    // Verify the product check by opening t(r), t(ωr), f(ωr), q(r) and checking:
+    //   t(ωr) − t(r) * f(ωr) = q(r) * z(r), and t(ω^{n-1}) = 1.
     pub fn verify(kzg: &KZG10, domain: &[ScalarField], proof: &ProductCheckProof) -> bool {
         if !kzg.verify(
             &proof.t_commit,
@@ -305,21 +322,21 @@ impl ProductCheck {
             return false;
         }
         let r = proof.r;
-        let wr = r * proof.omega;
+        let omega_r = r * proof.omega;
         if !kzg.verify(&proof.t_commit, r, proof.t_eval_r, &proof.t_proof_r) {
             return false;
         }
-        if !kzg.verify(&proof.t_commit, wr, proof.t_eval_wr, &proof.t_proof_wr) {
+        if !kzg.verify(&proof.t_commit, omega_r, proof.t_eval_wr, &proof.t_proof_wr) {
             return false;
         }
-        if !kzg.verify(&proof.f_commit, wr, proof.f_eval_wr, &proof.f_proof_wr) {
+        if !kzg.verify(&proof.f_commit, omega_r, proof.f_eval_wr, &proof.f_proof_wr) {
             return false;
         }
         if !kzg.verify(&proof.q_commit, r, proof.q_eval_r, &proof.q_proof_r) {
             return false;
         }
-        let z = vanishing_poly(domain);
-        let z_r = z.evaluate(&r);
+        let z_omega = vanishing_poly(domain);
+        let z_r = z_omega.evaluate(&r);
         proof.t_eval_wr - proof.t_eval_r * proof.f_eval_wr == proof.q_eval_r * z_r
     }
 }
@@ -348,6 +365,10 @@ pub struct PrescribedPermutationCheck;
 
 // ref: https://github.com/sec-bit/learning-zkp/blob/master/plonk-intro-zh/3-plonk-permutation.md
 impl PrescribedPermutationCheck {
+    // PrescribedPermutationCheck: prove f(x) = g(W(x)) over Ω using a randomized product check.
+    // W(x): permutation polynomial over Ω, given by w_values.
+    // z_perm(x): running product polynomial enforcing the permutation.
+    // l_0(x): Lagrange basis for the first point in Ω (boundary check).
     // Prove that f(x) = g(W(x)) for all x in domain via a product check:
     // f'(x) = f(x) + beta * W(x) + gamma
     // g'(x) = g(x) + beta * x + gamma
@@ -381,29 +402,31 @@ impl PrescribedPermutationCheck {
             let next = *z_vals.last().unwrap() * fp * gp.inverse().unwrap();
             z_vals.push(next);
         }
-        let z = interpolate(domain, &z_vals);
-        let z_commit = kzg.commit(&z);
-        let (z_eval_r, z_proof_r) = kzg.open(&z, r);
-        let (z_eval_wr, z_proof_wr) = kzg.open(&z, omega * r);
+        // z_perm(x): running product polynomial enforcing the permutation.
+        let z_perm = interpolate(domain, &z_vals);
+        let z_commit = kzg.commit(&z_perm);
+        let (z_eval_r, z_proof_r) = kzg.open(&z_perm, r);
+        let (z_eval_wr, z_proof_wr) = kzg.open(&z_perm, omega * r);
 
-        let mut l_k_vals = vec![ScalarField::ZERO; n];
+        let mut l_0_vals = vec![ScalarField::ZERO; n];
         if n > 0 {
-            l_k_vals[0] = ScalarField::ONE;
+            l_0_vals[0] = ScalarField::ONE;
         }
 
-        // random linear combination for product check and boundary check
-        let l_k = interpolate(domain, &l_k_vals);
-        let zw = shift_by_omega(&z, omega);
+        // l_0(x): Lagrange basis for x = 1 (the first point in Ω).
+        let l_0 = interpolate(domain, &l_0_vals);
+        let z_perm_w = shift_by_omega(&z_perm, omega);
         let w_poly = interpolate(domain, w_values);
-        let ff = f + &DensePolynomial::from_coefficients_slice(&[gamma]) + &w_poly * beta;
-        let gg = g + &DensePolynomial::from_coefficients_slice(&[gamma, beta]);
-        let h = l_k
-            .naive_mul(&(&z - &DensePolynomial::from_coefficients_slice(&[ScalarField::ONE])))
-            + &(&(zw.naive_mul(&gg)) - &(z.naive_mul(&ff))) * alpha;
+        // f'(x), g'(x): randomized linearization with (beta, gamma).
+        let f_prime = f + &DensePolynomial::from_coefficients_slice(&[gamma]) + &w_poly * beta;
+        let g_prime = g + &DensePolynomial::from_coefficients_slice(&[gamma, beta]);
+        let h = l_0
+            .naive_mul(&(&z_perm - &DensePolynomial::from_coefficients_slice(&[ScalarField::ONE])))
+            + &(&(z_perm_w.naive_mul(&g_prime)) - &(z_perm.naive_mul(&f_prime))) * alpha;
 
-        // quotient poly
-        let t = vanishing_poly(domain);
-        let (q, _rem) = poly_div(&h, &t);
+        // z_Ω(x): vanishing polynomial of Ω.
+        let z_omega = vanishing_poly(domain);
+        let (q, _rem) = poly_div(&h, &z_omega);
 
         let q_commit = kzg.commit(&q);
         let (q_eval_r, q_proof_r) = kzg.open(&q, r);
@@ -444,6 +467,9 @@ impl PrescribedPermutationCheck {
         r: ScalarField,
         proof: &PrescribedPermutationProof,
     ) -> bool {
+        // Verify with random r:
+        //   h(r) = l_0(r) * (z(r) - 1) + alpha * (z(ωr) * g'(r) - z(r) * f'(r))
+        //   h(r) = q(r) * z_Ω(r), where z_Ω(x) = ∏_{u ∈ Ω} (x - u).
         if proof.r != r {
             return false;
         }
@@ -469,24 +495,26 @@ impl PrescribedPermutationCheck {
         }
 
         let n = domain.len();
+        // W(x): permutation polynomial, provided as its values on Ω.
         let w_poly = interpolate(domain, w_values);
         let w_eval_r = w_poly.evaluate(&r);
 
         let f_prime_r = proof.f_eval_r + beta * w_eval_r + gamma;
         let g_prime_r = proof.g_eval_r + beta * r + gamma;
 
-        let mut l_k_vals = vec![ScalarField::ZERO; n];
+        let mut l_0_vals = vec![ScalarField::ZERO; n];
         if n > 0 {
-            l_k_vals[0] = ScalarField::ONE;
+            l_0_vals[0] = ScalarField::ONE;
         }
-        let l_k = interpolate(domain, &l_k_vals);
-        let l_k_r = l_k.evaluate(&r);
+        // l_0(x): Lagrange basis for x = 1.
+        let l_0 = interpolate(domain, &l_0_vals);
+        let l_0_r = l_0.evaluate(&r);
 
-        let h_r = l_k_r * (proof.z_eval_r - ScalarField::ONE)
+        let h_r = l_0_r * (proof.z_eval_r - ScalarField::ONE)
             + alpha * (proof.z_eval_wr * g_prime_r - proof.z_eval_r * f_prime_r);
-        let z_h = vanishing_poly(domain);
-        let z_h_r = z_h.evaluate(&r);
-        h_r == proof.q_eval_r * z_h_r
+        let z_omega = vanishing_poly(domain);
+        let z_omega_r = z_omega.evaluate(&r);
+        h_r == proof.q_eval_r * z_omega_r
     }
 }
 
