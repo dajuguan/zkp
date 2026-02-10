@@ -7,7 +7,7 @@ use ark_poly::{
 use crate::pairing::pairing;
 use crate::tiny_field::{G1Point, G2Point, ScalarField};
 
-pub trait PolyCommit {
+pub trait PolyCommit: Clone {
     type Field;
     type Polynomial;
     type Commitment;
@@ -32,6 +32,7 @@ pub struct SRS {
     pub g2_tau: G2Point,
 }
 
+#[derive(Debug, Clone)]
 pub struct KZG10 {
     pub srs: SRS,
 }

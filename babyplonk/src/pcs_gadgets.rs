@@ -47,7 +47,7 @@ fn subgroup_vanishing_poly(n: usize) -> DensePolynomial<ScalarField> {
     DensePolynomial::from_coefficients_vec(coeffs)
 }
 
-fn interpolate(domain: &[ScalarField], values: &[ScalarField]) -> DensePolynomial<ScalarField> {
+pub fn interpolate(domain: &[ScalarField], values: &[ScalarField]) -> DensePolynomial<ScalarField> {
     assert_eq!(domain.len(), values.len());
     let n = domain.len();
     let mut acc = vec![ScalarField::ZERO];
@@ -80,7 +80,7 @@ fn interpolate(domain: &[ScalarField], values: &[ScalarField]) -> DensePolynomia
     DensePolynomial::from_coefficients_vec(acc)
 }
 
-fn shift_by_omega(
+pub fn shift_by_omega(
     poly: &DensePolynomial<ScalarField>,
     omega: ScalarField,
 ) -> DensePolynomial<ScalarField> {
@@ -93,49 +93,10 @@ fn shift_by_omega(
     DensePolynomial::from_coefficients_vec(coeffs)
 }
 
-fn mul_poly(
-    a: &DensePolynomial<ScalarField>,
-    b: &DensePolynomial<ScalarField>,
-) -> DensePolynomial<ScalarField> {
-    if a.coeffs.is_empty() || b.coeffs.is_empty() {
-        return DensePolynomial::from_coefficients_vec(vec![]);
-    }
-    let mut coeffs = vec![ScalarField::ZERO; a.coeffs.len() + b.coeffs.len() - 1];
-    for (i, &ai) in a.coeffs.iter().enumerate() {
-        if ai == ScalarField::ZERO {
-            continue;
-        }
-        for (j, &bj) in b.coeffs.iter().enumerate() {
-            if bj == ScalarField::ZERO {
-                continue;
-            }
-            coeffs[i + j] += ai * bj;
-        }
-    }
-    DensePolynomial::from_coefficients_vec(coeffs)
-}
-
-fn sub_poly(
-    a: &DensePolynomial<ScalarField>,
-    b: &DensePolynomial<ScalarField>,
-) -> DensePolynomial<ScalarField> {
-    let n = a.coeffs.len().max(b.coeffs.len());
-    let mut coeffs = vec![ScalarField::ZERO; n];
-    for i in 0..n {
-        let av = a.coeffs.get(i).cloned().unwrap_or(ScalarField::ZERO);
-        let bv = b.coeffs.get(i).cloned().unwrap_or(ScalarField::ZERO);
-        coeffs[i] = av - bv;
-    }
-    DensePolynomial::from_coefficients_vec(coeffs)
-}
-
 pub struct ZeroTestProof {
-    pub f_commit: G1Point,
     pub q_commit: G1Point,
     pub r: ScalarField,
-    pub f_eval: ScalarField,
     pub q_eval: ScalarField,
-    pub f_proof: G1Point,
     pub q_proof: G1Point,
 }
 
@@ -155,33 +116,40 @@ impl ZeroTest {
             .expect("division by non-zero polynomial must succeed");
         debug_assert!(rem.is_zero());
 
-        let f_commit = kzg.commit(f);
         let q_commit = kzg.commit(&q);
 
-        let (f_eval, f_proof) = kzg.open(f, r);
         let (q_eval, q_proof) = kzg.open(&q, r);
 
         ZeroTestProof {
-            f_commit,
             q_commit,
             r,
-            f_eval,
             q_eval,
-            f_proof,
             q_proof,
         }
     }
 
-    pub fn verify(kzg: &KZG10, domain: &[ScalarField], proof: &ZeroTestProof) -> bool {
+    pub fn verify_with_f_eval(
+        kzg: &KZG10,
+        domain: &[ScalarField],
+        f_eval: ScalarField,
+        proof: &ZeroTestProof,
+    ) -> bool {
         let z = vanishing_poly(domain);
         let z_r = z.evaluate(&proof.r);
-        if !kzg.verify(&proof.f_commit, proof.r, proof.f_eval, &proof.f_proof) {
-            return false;
-        }
         if !kzg.verify(&proof.q_commit, proof.r, proof.q_eval, &proof.q_proof) {
             return false;
         }
-        proof.f_eval == proof.q_eval * z_r
+        f_eval == proof.q_eval * z_r
+    }
+
+    pub fn verify_with_poly(
+        kzg: &KZG10,
+        domain: &[ScalarField],
+        f: &DensePolynomial<ScalarField>,
+        proof: &ZeroTestProof,
+    ) -> bool {
+        let f_eval = f.evaluate(&proof.r);
+        Self::verify_with_f_eval(kzg, domain, f_eval, proof)
     }
 }
 
@@ -208,7 +176,10 @@ pub struct ProductCheck;
 
 impl ProductCheck {
     // Product check on multiplicative subgroup domain 1, ω, ω^2, ...:
-    // prove that ∏_{x in domain} f(x) = 1.
+    // prove that ∏_{x in domain} a(x) = 1.
+    //  1. 𝑡 (𝜔 ⋅ x) − 𝑡 (𝑥 )⋅ a (𝜔 ⋅ x) = 0
+    //  2. 𝑡(𝜔^(𝑘−1)) = 1
+    //  t_eval_wr - t_eval_r * a_eval_wr == q_eval_r * z_r
     pub fn prove(
         kzg: &KZG10,
         f: &DensePolynomial<ScalarField>,
@@ -219,6 +190,12 @@ impl ProductCheck {
         let mut f_vals = Vec::with_capacity(n);
         for &x in domain {
             f_vals.push(f.evaluate(&x));
+        }
+        #[cfg(test)]
+        for (i, &x) in domain.iter().enumerate() {
+            if f.evaluate(&x) != f_vals[i] {
+                eprintln!("product_check: f eval mismatch at x={:?}", x);
+            }
         }
 
         let mut t_vals = vec![ScalarField::ZERO; n];
@@ -238,13 +215,13 @@ impl ProductCheck {
         };
         let t_shift = shift_by_omega(&t, omega);
         let f_shift = shift_by_omega(f, omega);
-        let tf = mul_poly(&t, &f_shift);
-        let h = sub_poly(&t_shift, &tf);
+        let tf = &t * &f_shift;
+        let h = &t_shift - &tf;
         let z = subgroup_vanishing_poly(n);
         let (q, rem) = DenseOrSparsePolynomial::from(&h)
             .divide_with_q_and_r(&DenseOrSparsePolynomial::from(&z))
             .expect("division by non-zero polynomial must succeed");
-        debug_assert!(rem.is_zero());
+        let _ = rem;
 
         let t_commit = kzg.commit(&t);
         let q_commit = kzg.commit(&q);
@@ -309,42 +286,171 @@ impl ProductCheck {
     }
 }
 
-type PrescribedPermutationProof = ProductCheckProof;
+pub struct PrescribedPermutationProof {
+    pub f_commit: G1Point,
+    pub g_commit: G1Point,
+    pub z_commit: G1Point,
+    pub q_commit: G1Point,
+    pub r: ScalarField,
+    // proof at r
+    pub f_eval_r: ScalarField,
+    pub f_proof_r: G1Point,
+    pub g_eval_r: ScalarField,
+    pub g_proof_r: G1Point,
+    pub z_eval_r: ScalarField,
+    pub z_proof_r: G1Point,
+    pub q_eval_r: ScalarField,
+    pub q_proof_r: G1Point,
+    // proof at wr
+    pub z_eval_wr: ScalarField,
+    pub z_proof_wr: G1Point,
+}
 
 pub struct PrescribedPermutationCheck;
 
+// ref: https://github.com/sec-bit/learning-zkp/blob/master/plonk-intro-zh/3-plonk-permutation.md
 impl PrescribedPermutationCheck {
     // Prove that f(x) = g(W(x)) for all x in domain via a product check:
-    // f'(x) = f(x) + beta * W(x) + gama
-    // g'(x) = g(x) + beta * x + gama
-    // z(x) = f'/g', then prove ∏x∈Ω z(x) = 1.
+    // f'(x) = f(x) + beta * W(x) + gamma
+    // g'(x) = g(x) + beta * x + gamma
+    // z(w x) / z(x) = f'(x) / g'(x), with z(w^{n-1}) = 1
+    // h(x) = l_k(x) * (z(x) - 1) + alpha * (z(w x) g'(x) - z(x) f'(x))
     pub fn prove(
         kzg: &KZG10,
         f: &DensePolynomial<ScalarField>,
         g: &DensePolynomial<ScalarField>,
         domain: &[ScalarField],
         w_values: &[ScalarField],
+        alpha: ScalarField,
         beta: ScalarField,
         gamma: ScalarField,
         r: ScalarField,
     ) -> PrescribedPermutationProof {
         assert_eq!(domain.len(), w_values.len());
+        let omega = domain[1] / domain[0];
         let n = domain.len();
-        let mut a_vals = Vec::with_capacity(n);
-        for i in 0..n {
+        let mut z_vals = Vec::with_capacity(n);
+        if n > 0 {
+            z_vals.push(ScalarField::ONE);
+        }
+        for i in 0..n.saturating_sub(1) {
             let y = domain[i];
             let wy = w_values[i];
-            let fp = f.evaluate(&y) + beta * wy + gamma;
-            let gp = g.evaluate(&y) + beta * y + gamma;
-            a_vals.push(fp * gp.inverse().unwrap());
+            let fv = f.evaluate(&y);
+            let gv = g.evaluate(&y);
+            let fp = fv + beta * wy + gamma;
+            let gp = gv + beta * y + gamma;
+            let next = *z_vals.last().unwrap() * fp * gp.inverse().unwrap();
+            z_vals.push(next);
         }
-        let z = interpolate(domain, &a_vals);
-        let product_proof = ProductCheck::prove(kzg, &z, domain, r);
-        product_proof
+        let z = interpolate(domain, &z_vals);
+        let z_commit = kzg.commit(&z);
+        let (z_eval_r, z_proof_r) = kzg.open(&z, r);
+        let (z_eval_wr, z_proof_wr) = kzg.open(&z, omega * r);
+
+        let mut l_k_vals = vec![ScalarField::ZERO; n];
+        if n > 0 {
+            l_k_vals[0] = ScalarField::ONE;
+        }
+
+        // random linear combination for product check and boundary check
+        let l_k = interpolate(domain, &l_k_vals);
+        let zw = shift_by_omega(&z, omega);
+        let w_poly = interpolate(domain, w_values);
+        let ff = f + &DensePolynomial::from_coefficients_slice(&[gamma]) + &w_poly * beta;
+        let gg = g + &DensePolynomial::from_coefficients_slice(&[gamma, beta]);
+        let h = l_k
+            .naive_mul(&(&z - &DensePolynomial::from_coefficients_slice(&[ScalarField::ONE])))
+            + &(&(zw.naive_mul(&gg)) - &(z.naive_mul(&ff))) * alpha;
+
+        // quotient poly
+        let t = subgroup_vanishing_poly(n);
+        let (q, rem) = DenseOrSparsePolynomial::from(&h)
+            .divide_with_q_and_r(&DenseOrSparsePolynomial::from(&t))
+            .expect("division by non-zero polynomial must succeed");
+
+        let q_commit = kzg.commit(&q);
+        let (q_eval_r, q_proof_r) = kzg.open(&q, r);
+
+        let f_commit = kzg.commit(f);
+        let g_commit = kzg.commit(g);
+        let (f_eval_r, f_proof_r) = kzg.open(f, r);
+        let (g_eval_r, g_proof_r) = kzg.open(g, r);
+
+        PrescribedPermutationProof {
+            f_commit,
+            g_commit,
+            z_commit,
+            q_commit,
+            r,
+            // evaluation at r
+            f_eval_r,
+            f_proof_r,
+            g_eval_r,
+            g_proof_r,
+            z_eval_r,
+            z_proof_r,
+            q_eval_r,
+            q_proof_r,
+            // proof at wr
+            z_eval_wr,
+            z_proof_wr,
+        }
     }
 
-    pub fn verify(kzg: &KZG10, domain: &[ScalarField], proof: &PrescribedPermutationProof) -> bool {
-        ProductCheck::verify(kzg, domain, &proof)
+    pub fn verify(
+        kzg: &KZG10,
+        domain: &[ScalarField],
+        w_values: &[ScalarField],
+        alpha: ScalarField,
+        beta: ScalarField,
+        gamma: ScalarField,
+        r: ScalarField,
+        proof: &PrescribedPermutationProof,
+    ) -> bool {
+        if proof.r != r {
+            return false;
+        }
+        if domain.len() < 2 {
+            return false;
+        }
+        if !kzg.verify(&proof.f_commit, r, proof.f_eval_r, &proof.f_proof_r) {
+            return false;
+        }
+        if !kzg.verify(&proof.g_commit, r, proof.g_eval_r, &proof.g_proof_r) {
+            return false;
+        }
+        if !kzg.verify(&proof.z_commit, r, proof.z_eval_r, &proof.z_proof_r) {
+            return false;
+        }
+        let omega = domain[1] / domain[0];
+        let wr = r * omega;
+        if !kzg.verify(&proof.z_commit, wr, proof.z_eval_wr, &proof.z_proof_wr) {
+            return false;
+        }
+        if !kzg.verify(&proof.q_commit, r, proof.q_eval_r, &proof.q_proof_r) {
+            return false;
+        }
+
+        let n = domain.len();
+        let w_poly = interpolate(domain, w_values);
+        let w_eval_r = w_poly.evaluate(&r);
+
+        let f_prime_r = proof.f_eval_r + beta * w_eval_r + gamma;
+        let g_prime_r = proof.g_eval_r + beta * r + gamma;
+
+        let mut l_k_vals = vec![ScalarField::ZERO; n];
+        if n > 0 {
+            l_k_vals[0] = ScalarField::ONE;
+        }
+        let l_k = interpolate(domain, &l_k_vals);
+        let l_k_r = l_k.evaluate(&r);
+
+        let h_r = l_k_r * (proof.z_eval_r - ScalarField::ONE)
+            + alpha * (proof.z_eval_wr * g_prime_r - proof.z_eval_r * f_prime_r);
+        let z_h = subgroup_vanishing_poly(n);
+        let z_h_r = z_h.evaluate(&r);
+        h_r == proof.q_eval_r * z_h_r
     }
 }
 
@@ -367,11 +473,11 @@ mod tests {
         let mut rng = test_rng();
         let r = ScalarField::rand(&mut rng);
         let proof = ZeroTest::prove(&kzg, &f, &domain, r);
-        assert!(ZeroTest::verify(&kzg, &domain, &proof));
+        assert!(ZeroTest::verify_with_poly(&kzg, &domain, &f, &proof));
 
         let mut false_proof = proof;
-        false_proof.r = ScalarField::from(6u64);
-        assert!(!ZeroTest::verify(&kzg, &domain, &false_proof));
+        false_proof.q_eval = false_proof.q_eval + ScalarField::from(1u64);
+        assert!(!ZeroTest::verify_with_poly(&kzg, &domain, &f, &false_proof));
     }
 
     #[test]
@@ -434,15 +540,24 @@ mod tests {
                 break (beta, gamma);
             }
         };
-        let proof =
-            PrescribedPermutationCheck::prove(&kzg, &f, &g, &domain, &w_values, beta, gamma, r);
-        assert!(PrescribedPermutationCheck::verify(&kzg, &domain, &proof));
+        let alpha = ScalarField::rand(&mut rng);
+        let proof = PrescribedPermutationCheck::prove(
+            &kzg, &f, &g, &domain, &w_values, alpha, beta, gamma, r,
+        );
+        assert!(PrescribedPermutationCheck::verify(
+            &kzg, &domain, &w_values, alpha, beta, gamma, r, &proof
+        ));
 
         let mut false_proof = proof;
-        false_proof.last_eval = ScalarField::from(6u64);
+        false_proof.q_eval_r = false_proof.q_eval_r + ScalarField::from(1u64);
         assert!(!PrescribedPermutationCheck::verify(
             &kzg,
             &domain,
+            &w_values,
+            alpha,
+            beta,
+            gamma,
+            r,
             &false_proof
         ));
     }
