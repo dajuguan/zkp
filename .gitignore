@@ -161,3 +161,7 @@ cython_debug/
 
 # caches
 *.obj
+
+
+## circom
+groth16/outputs/

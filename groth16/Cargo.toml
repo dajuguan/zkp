@@ -1,0 +1,11 @@
+[package]
+name = "groth16"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+ark-bn254 = "0.4"
+ark-ec = "0.4"
+ark-ff = "0.4"
+serde_json = "1.0"
